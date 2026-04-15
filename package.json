@@ -9,8 +9,8 @@
     "sign": "bun run scripts/sign.ts",
     "submit": "bun run scripts/submit.ts",
     "stale-check": "bun run scripts/stale-check.ts",
-    "dev": "cd worker && bunx wrangler dev",
-    "deploy": "cd worker && bunx wrangler deploy",
+    "dev": "bunx wrangler dev",
+    "deploy": "bunx wrangler deploy",
     "typecheck": "bun run tsc --noEmit"
   },
   "dependencies": {
