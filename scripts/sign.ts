@@ -9,12 +9,15 @@
  *   bun run scripts/sign.ts
  *
  * Environment:
- *   BRIKA_REGISTRY_PRIVATE_KEY -- PEM-encoded Ed25519 private key (required)
+ *   BRIKA_REGISTRY_PRIVATE_KEY -- Ed25519 private key in PEM format
+ *     Accepts both PKCS#8 (-----BEGIN PRIVATE KEY-----) and
+ *     OpenSSH (-----BEGIN OPENSSH PRIVATE KEY-----) formats.
  */
 import {
 	createPrivateKey,
 	createPublicKey,
 	sign,
+	type KeyObject,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -28,9 +31,134 @@ import type { VerifiedPlugin, VerifiedPluginsList } from "@brika/registry";
 const ROOT_DIR = resolve(import.meta.dir, "..");
 const REGISTRY_PATH = resolve(ROOT_DIR, "dist", "verified-plugins.json");
 
+// ── PKCS#8 DER constants for Ed25519 ────────────────────────────────────────
+
+/** PKCS#8 DER prefix for Ed25519 private keys (OID 1.3.101.112). */
+const PKCS8_ED25519_PREFIX = new Uint8Array([
+	0x30, 0x2e, // SEQUENCE (46 bytes)
+	0x02, 0x01, 0x00, // INTEGER 0 (version)
+	0x30, 0x05, // SEQUENCE (5 bytes)
+	0x06, 0x03, 0x2b, 0x65, 0x70, // OID 1.3.101.112 (Ed25519)
+	0x04, 0x22, // OCTET STRING (34 bytes)
+	0x04, 0x20, // OCTET STRING (32 bytes) -- the 32-byte seed follows
+]);
+
+// ── OpenSSH key parsing ─────────────────────────────────────────────────────
+
+/** Read a uint32 big-endian from a buffer at offset. */
+function readUint32(buf: Buffer, offset: number): number {
+	return buf.readUInt32BE(offset);
+}
+
+/** Read a length-prefixed string/bytes from a buffer at offset. Returns [data, newOffset]. */
+function readString(buf: Buffer, offset: number): [Buffer, number] {
+	const len = readUint32(buf, offset);
+	return [buf.subarray(offset + 4, offset + 4 + len), offset + 4 + len];
+}
+
+/**
+ * Parse an OpenSSH private key and convert it to a PKCS#8 KeyObject.
+ *
+ * OpenSSH Ed25519 private key binary layout:
+ *   "openssh-key-v1\0" magic
+ *   string ciphername ("none")
+ *   string kdfname ("none")
+ *   string kdfoptions
+ *   uint32 number-of-keys (1)
+ *   string public-key-blob
+ *   string private-section:
+ *     uint32 checkint1
+ *     uint32 checkint2
+ *     string keytype ("ssh-ed25519")
+ *     string pubkey (32 bytes)
+ *     string privkey (64 bytes = 32-byte seed + 32-byte pubkey)
+ *     string comment
+ *     padding
+ */
+function parseOpenSSHKey(pem: string): KeyObject {
+	// Strip header/footer and decode base64
+	const lines = pem
+		.split("\n")
+		.filter(
+			(l) =>
+				!l.startsWith("-----") && l.trim().length > 0,
+		);
+	const buf = Buffer.from(lines.join(""), "base64");
+
+	// Verify magic
+	const magic = "openssh-key-v1\0";
+	if (buf.subarray(0, magic.length).toString("ascii") !== magic) {
+		throw new Error("Invalid OpenSSH key: bad magic");
+	}
+
+	let offset = magic.length;
+
+	// Skip ciphername, kdfname, kdfoptions
+	let _s: Buffer;
+	[_s, offset] = readString(buf, offset); // ciphername
+	[_s, offset] = readString(buf, offset); // kdfname
+	[_s, offset] = readString(buf, offset); // kdfoptions
+
+	// Number of keys
+	const numKeys = readUint32(buf, offset);
+	offset += 4;
+	if (numKeys !== 1) {
+		throw new Error(
+			`Expected 1 key, got ${numKeys}`,
+		);
+	}
+
+	// Skip public key blob
+	[_s, offset] = readString(buf, offset);
+
+	// Read private section
+	let privSection: Buffer;
+	[privSection, offset] = readString(buf, offset);
+
+	// Parse private section
+	let pOffset = 0;
+
+	// Check ints (must match)
+	const check1 = readUint32(privSection, pOffset);
+	pOffset += 4;
+	const check2 = readUint32(privSection, pOffset);
+	pOffset += 4;
+	if (check1 !== check2) {
+		throw new Error(
+			"OpenSSH key check values mismatch (encrypted key?)",
+		);
+	}
+
+	// Key type
+	let keyType: Buffer;
+	[keyType, pOffset] = readString(privSection, pOffset);
+	if (keyType.toString("ascii") !== "ssh-ed25519") {
+		throw new Error(
+			`Expected ssh-ed25519, got ${keyType.toString("ascii")}`,
+		);
+	}
+
+	// Public key (32 bytes)
+	[_s, pOffset] = readString(privSection, pOffset);
+
+	// Private key (64 bytes = 32 seed + 32 pubkey)
+	let privKeyData: Buffer;
+	[privKeyData, pOffset] = readString(privSection, pOffset);
+	const seed = privKeyData.subarray(0, 32);
+
+	// Build PKCS#8 DER
+	const pkcs8Der = Buffer.concat([PKCS8_ED25519_PREFIX, seed]);
+
+	return createPrivateKey({
+		key: pkcs8Der,
+		format: "der",
+		type: "pkcs8",
+	});
+}
+
 // ── Key Management ───────────────────────────────────────────────────────────
 
-function loadPrivateKey(): string {
+function loadPrivateKeyObject(): KeyObject {
 	const envKey = process.env.BRIKA_REGISTRY_PRIVATE_KEY;
 	if (!envKey) {
 		console.error(
@@ -41,20 +169,29 @@ function loadPrivateKey(): string {
 		);
 		process.exit(1);
 	}
+
 	// Unescape \\n sequences (common in CI env vars)
-	return envKey.replaceAll(String.raw`\n`, "\n");
+	const pem = envKey.replaceAll(String.raw`\n`, "\n");
+
+	// Detect format and parse
+	if (pem.includes("OPENSSH PRIVATE KEY")) {
+		return parseOpenSSHKey(pem);
+	}
+
+	// Standard PKCS#8 PEM
+	return createPrivateKey(pem);
 }
 
-function derivePublicKeyBase64(privateKeyPem: string): string {
-	const pub = createPublicKey(createPrivateKey(privateKeyPem));
+function derivePublicKeyBase64(privateKey: KeyObject): string {
+	const pub = createPublicKey(privateKey);
 	const der = pub.export({ type: "spki", format: "der" });
 	return Buffer.from(der.subarray(SPKI_HEADER.length)).toString(
 		"base64",
 	);
 }
 
-function signData(data: string, privateKeyPem: string): string {
-	const sig = sign(null, Buffer.from(data, "utf-8"), privateKeyPem);
+function signData(data: string, privateKey: KeyObject): string {
+	const sig = sign(null, Buffer.from(data, "utf-8"), privateKey);
 	return sig.toString("hex");
 }
 
@@ -103,8 +240,8 @@ function extractRegistryPayload(
 function main(): void {
 	console.log("Signing registry...\n");
 
-	const privateKeyPem = loadPrivateKey();
-	const publicKeyBase64 = derivePublicKeyBase64(privateKeyPem);
+	const privateKey = loadPrivateKeyObject();
+	const publicKeyBase64 = derivePublicKeyBase64(privateKey);
 
 	// Read the unsigned registry
 	const raw = readFileSync(REGISTRY_PATH, "utf-8");
@@ -118,7 +255,7 @@ function main(): void {
 		const payload = extractPluginPayload(plugin);
 		plugin.signature = signData(
 			canonicalize(payload),
-			privateKeyPem,
+			privateKey,
 		);
 	}
 
@@ -126,7 +263,7 @@ function main(): void {
 	const registryPayload = extractRegistryPayload(registry);
 	registry.signature = signData(
 		canonicalize(registryPayload),
-		privateKeyPem,
+		privateKey,
 	);
 
 	// Write signed registry

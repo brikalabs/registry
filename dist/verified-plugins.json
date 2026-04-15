@@ -14,7 +14,8 @@
       ],
       "featured": true,
       "category": "official",
-      "source": "npm"
+      "source": "npm",
+      "signature": "8d72213890f0c01df6ff927b94fdf1711e6d3766ccdacbd6e1d264df12ccb6672b2e4a320e1c9f110508bf10913077e63b25504d459d30c7c0d4ed6256ec400f"
     },
     {
       "name": "@brika/plugin-matter",
@@ -29,7 +30,8 @@
       ],
       "featured": true,
       "category": "official",
-      "source": "npm"
+      "source": "npm",
+      "signature": "f5f21113eb5dbfc6c9f9edf0a273cda5e0f0be70103c54b74609f59aa04c9968de0a1d6de4c695aa20de9623a238ef1845779bd9844ef342c9a676ceb52e8a03"
     },
     {
       "name": "@brika/plugin-spotify",
@@ -44,7 +46,10 @@
       ],
       "featured": true,
       "category": "official",
-      "source": "npm"
+      "source": "npm",
+      "signature": "95cfee5ea8e79bf5c45ae8bb0f2ffa8fb5d2d52c8568d19f9f1d32a7331d4d43fda6f3bf651ea7242cbdd9db3326a3b83ff8dc97320236e4deba838b60e73700"
     }
-  ]
+  ],
+  "publicKey": "ncl/idhhH3NPxm3Gy6Rjk9CZ3Cv4vBkze5sUFShYhnc=",
+  "signature": "b5dbcbee3f5b8075cbddc08f012575b2fe859f2ec29eaed73685664ad50a81ff4936b17070a37a18536a04ee622bc713cb638dda796ba382c1c4b13a83328004"
 }
