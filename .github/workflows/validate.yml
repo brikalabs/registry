@@ -1,0 +1,269 @@
+name: Validate Plugin Entries
+
+on:
+  pull_request:
+    paths:
+      - "plugins/**"
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Detect changed plugin files
+        id: changes
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_SHA=${{ github.sha }}
+
+          # All changed plugin files
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- 'plugins/**/*.yaml' || true)
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # New files only
+          NEW=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- 'plugins/**/*.yaml' || true)
+          echo "new_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NEW" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Modified files only
+          MODIFIED=$(git diff --name-only --diff-filter=M "$BASE_SHA" "$HEAD_SHA" -- 'plugins/**/*.yaml' || true)
+          echo "modified_files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$MODIFIED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Count
+          NEW_COUNT=$(echo "$NEW" | grep -c . || echo 0)
+          MOD_COUNT=$(echo "$MODIFIED" | grep -c . || echo 0)
+          echo "new_count=$NEW_COUNT" >> "$GITHUB_OUTPUT"
+          echo "modified_count=$MOD_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Run validation
+        id: validate
+        if: steps.changes.outputs.files != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bun run scripts/validate.ts ${{ steps.changes.outputs.files }} > validation-report.json 2>&1 || true
+          echo "report<<EOF" >> "$GITHUB_OUTPUT"
+          cat validation-report.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: always() && steps.changes.outputs.files != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let report;
+            try {
+              const raw = fs.readFileSync('validation-report.json', 'utf-8');
+              report = JSON.parse(raw);
+            } catch {
+              // If validation script failed to produce JSON, post error
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '<!-- brika-registry-validator -->\n## Plugin Registry Validation\n\n:x: Validation script failed to produce a report. Check the workflow logs.',
+              });
+              return;
+            }
+
+            // Build the comment
+            const lines = ['<!-- brika-registry-validator -->', '## Plugin Registry Validation\n'];
+
+            // Summary table
+            const checks = [
+              ['YAML Syntax', report.files.every(f => f.yamlValid)],
+              ['Schema Validation', report.files.every(f => f.schemaValid)],
+              ['Filename Consistency', report.files.every(f => f.filenameConsistent)],
+              ['Duplicate Detection', report.files.every(f => !f.duplicateOf)],
+              ['Source Verification', report.files.every(f => f.sourceCheck.errors.length === 0)],
+            ];
+
+            lines.push('| Check | Status |');
+            lines.push('|-------|--------|');
+            for (const [name, passed] of checks) {
+              const icon = passed ? ':white_check_mark:' : ':x:';
+              lines.push(`| ${name} | ${icon} |`);
+            }
+            lines.push('');
+
+            // Per-file details
+            for (const file of report.files) {
+              const status = file.isNew ? 'new plugin' : 'update';
+              const name = file.entry?.name || file.actualName || file.path;
+              lines.push(`### \`${name}\` (${status})\n`);
+
+              // Errors
+              if (!file.yamlValid) {
+                lines.push(`:x: **YAML Parse Error**: ${file.yamlError}\n`);
+              }
+              if (!file.schemaValid && file.schemaErrors) {
+                lines.push(':x: **Schema Errors**:');
+                for (const err of file.schemaErrors) {
+                  lines.push(`- ${err}`);
+                }
+                lines.push('');
+              }
+              if (!file.filenameConsistent) {
+                lines.push(`:x: **Filename mismatch**: expected \`${file.expectedName}\`, got \`${file.actualName}\`\n`);
+              }
+              if (file.duplicateOf) {
+                lines.push(`:x: **Duplicate**: already defined in \`${file.duplicateOf}\`\n`);
+              }
+
+              // Source details
+              if (file.sourceCheck.errors.length > 0) {
+                for (const err of file.sourceCheck.errors) {
+                  lines.push(`:x: ${err}`);
+                }
+                lines.push('');
+              }
+
+              if (file.sourceCheck.warnings.length > 0) {
+                for (const warn of file.sourceCheck.warnings) {
+                  lines.push(`:warning: ${warn}`);
+                }
+                lines.push('');
+              }
+
+              // npm details
+              const details = file.sourceCheck.details;
+              if (details && file.entry?.source === 'npm' && 'version' in details) {
+                lines.push('| Field | Value |');
+                lines.push('|-------|-------|');
+                lines.push(`| Source | npm |`);
+                lines.push(`| Latest Version | \`${details.version}\` |`);
+                if (details.weeklyDownloads !== undefined) {
+                  lines.push(`| Weekly Downloads | ${details.weeklyDownloads.toLocaleString()} |`);
+                }
+                if (details.license) {
+                  lines.push(`| License | ${details.license} |`);
+                }
+                lines.push(`| \`engines.brika\` | ${details.hasEnginesBrika ? ':white_check_mark:' : ':x: missing'} |`);
+                if (details.keywords?.length) {
+                  lines.push(`| Keywords | ${details.keywords.map(k => `\`${k}\``).join(', ')} |`);
+                }
+                lines.push('');
+                lines.push(file.sourceCheck.exists
+                  ? ':white_check_mark: Package verified on npm registry'
+                  : ':x: Package not found on npm registry');
+                lines.push('');
+              }
+
+              // GitHub details
+              if (details && file.entry?.source === 'github' && 'stars' in details) {
+                lines.push('| Field | Value |');
+                lines.push('|-------|-------|');
+                lines.push(`| Source | GitHub |`);
+                lines.push(`| Stars | ${details.stars} |`);
+                if (details.license) {
+                  lines.push(`| License | ${details.license} |`);
+                }
+                lines.push(`| Archived | ${details.archived ? ':warning: Yes' : 'No'} |`);
+                lines.push('');
+              }
+            }
+
+            // Summary line
+            lines.push('---');
+            lines.push(`**${report.summary.passed}** passed, **${report.summary.failed}** failed, **${report.summary.warnings}** warnings`);
+
+            const body = lines.join('\n');
+
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.body?.includes('<!-- brika-registry-validator -->')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Apply labels
+        if: always() && steps.changes.outputs.files != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const labels = new Set();
+
+            try {
+              const raw = fs.readFileSync('validation-report.json', 'utf-8');
+              const report = JSON.parse(raw);
+
+              // Category labels
+              for (const file of report.files) {
+                if (file.entry?.category) {
+                  labels.add(`category:${file.entry.category}`);
+                }
+              }
+
+              // New vs update
+              const newCount = parseInt('${{ steps.changes.outputs.new_count }}') || 0;
+              const modCount = parseInt('${{ steps.changes.outputs.modified_count }}') || 0;
+              if (newCount > 0) labels.add('new-plugin');
+              if (modCount > 0) labels.add('update-plugin');
+
+              // Validation status
+              if (report.summary.failed > 0) labels.add('needs-fixes');
+            } catch {
+              labels.add('validation-error');
+            }
+
+            if (labels.size > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [...labels],
+              });
+            }
+
+      - name: Fail if validation errors
+        if: steps.validate.outcome == 'failure'
+        run: |
+          echo "Validation failed. See PR comment for details."
+          exit 1

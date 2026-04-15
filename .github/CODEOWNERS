@@ -1,0 +1,11 @@
+# Official plugins require maintainer review
+plugins/brika/   @brikalabs/maintainers
+
+# All plugin changes require maintainer review
+plugins/         @brikalabs/maintainers
+
+# Infrastructure
+.github/         @brikalabs/maintainers
+scripts/         @brikalabs/maintainers
+schema/          @brikalabs/maintainers
+worker/          @brikalabs/maintainers

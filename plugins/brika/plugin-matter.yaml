@@ -1,0 +1,11 @@
+name: "@brika/plugin-matter"
+description: "Matter smart home device integration for BRIKA"
+tags:
+  - matter
+  - smart-home
+  - iot
+  - integration
+category: official
+source: npm
+featured: true
+verifiedBy: maintainer

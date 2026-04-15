@@ -1,0 +1,100 @@
+name: Stale Plugin Check
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 6am UTC
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  stale-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run stale check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUTPUT=$(bun run stale-check 2>&1) || true
+          echo "$OUTPUT"
+
+          # Extract JSON report
+          REPORT=$(echo "$OUTPUT" | sed -n '/---JSON_REPORT_START---/,/---JSON_REPORT_END---/{//!p}')
+          echo "report<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPORT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Open issues for stale plugins
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let report;
+            try {
+              report = JSON.parse(`${{ steps.check.outputs.report }}`);
+            } catch {
+              console.log('No stale check report available');
+              return;
+            }
+
+            if (!report.stale || report.stale.length === 0) {
+              console.log('No stale plugins found');
+              return;
+            }
+
+            for (const plugin of report.stale) {
+              const title = `[Stale] ${plugin.name} no longer available on ${plugin.source}`;
+
+              // Check if issue already exists
+              const { data: existing } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'stale-plugin',
+              });
+
+              const alreadyOpen = existing.some(i => i.title === title);
+              if (alreadyOpen) {
+                console.log(`Issue already open for ${plugin.name}, skipping`);
+                continue;
+              }
+
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['stale-plugin'],
+                body: [
+                  `## Stale Plugin Detected`,
+                  '',
+                  `| Field | Value |`,
+                  `|-------|-------|`,
+                  `| Plugin | \`${plugin.name}\` |`,
+                  `| Source | ${plugin.source} |`,
+                  `| Reason | ${plugin.reason} |`,
+                  `| Detected | ${report.checkedAt} |`,
+                  '',
+                  '### Action Required',
+                  '',
+                  'This plugin was detected as no longer available. Please investigate and either:',
+                  '1. **Fix the issue** if the plugin was temporarily unavailable',
+                  '2. **Remove the plugin** by deleting its YAML file and opening a PR',
+                  '',
+                  '*This issue was automatically created by the stale plugin checker.*',
+                ].join('\n'),
+              });
+
+              console.log(`Created issue for stale plugin: ${plugin.name}`);
+            }

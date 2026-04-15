@@ -1,0 +1,10 @@
+name: "@brika/blocks-builtin"
+description: "Built-in blocks for Brika workflows"
+tags:
+  - blocks
+  - official
+  - core
+category: official
+source: npm
+featured: true
+verifiedBy: maintainer
