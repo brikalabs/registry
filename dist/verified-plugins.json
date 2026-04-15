@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "lastUpdated": "2026-04-15T08:40:49.428Z",
+  "lastUpdated": "2026-04-15T11:05:24.728Z",
   "plugins": [
     {
       "name": "@brika/blocks-builtin",
@@ -51,5 +51,5 @@
     }
   ],
   "publicKey": "ncl/idhhH3NPxm3Gy6Rjk9CZ3Cv4vBkze5sUFShYhnc=",
-  "signature": "914ba344e7c07983043320b0ec81a922dad5612f6e85291888ca82f205195a90356dd4bb862819dad389d38972309ee23cc77d6275ee43c4776e6658c7ddaa02"
+  "signature": "44ada9c7e73913905e0dd67df4e97d5f2ee5ca21bc499836b0d4b649616f97cca30beb326b6aabce7667a352103c1fc6b849ed32904d84a0ccb2fb965900b707"
 }
