@@ -32,15 +32,28 @@ jobs:
       - name: Build registry
         run: bun run build
 
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet dist/verified-plugins.json 2>/dev/null; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to registry, skipping sign and commit."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Registry changed, signing..."
+          fi
+
       - name: Sign registry
+        if: steps.diff.outputs.changed == 'true'
         env:
           BRIKA_REGISTRY_PRIVATE_KEY: ${{ secrets.BRIKA_REGISTRY_PRIVATE_KEY }}
         run: bun run sign
 
       - name: Commit signed registry
+        if: steps.diff.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add dist/verified-plugins.json
-          git diff --staged --quiet || git commit -m "chore: build and sign registry [skip ci]"
+          git commit -m "chore: build and sign registry [skip ci]"
           git push
