@@ -21,7 +21,25 @@ Your plugin must:
 2. Have `engines.brika` in its `package.json` (specifies compatible Brika versions)
 3. Have `brika` or `brika-plugin` in its `keywords` array
 
-### Steps
+### Option A: Using the CLI (recommended)
+
+The fastest way to submit your plugin:
+
+```bash
+git clone https://github.com/brikalabs/registry.git
+cd registry
+bun install
+bun run submit @myorg/brika-dashboard
+```
+
+The CLI will:
+- Fetch your package metadata from npm
+- Let you review and customize the entry
+- Create a branch, commit, and open a PR automatically
+
+Requires the [GitHub CLI](https://cli.github.com) (`gh`) to be installed and authenticated.
+
+### Option B: Manual submission
 
 1. **Fork** this repository
 2. **Create a YAML file** in the `plugins/` directory
@@ -46,14 +64,13 @@ Your plugin must:
 
 4. **Open a Pull Request**
 
-   CI will automatically validate your entry:
-   - YAML syntax and schema validation
-   - Filename/name consistency check
-   - Verifies the package exists on npm/GitHub
-   - Checks for `engines.brika` and `brika` keyword
+CI will automatically validate your entry:
+- YAML syntax and schema validation
+- Filename/name consistency check
+- Verifies the package exists on npm/GitHub
+- Checks for `engines.brika` and `brika` keyword
 
-5. A maintainer will review your submission
-6. Once merged, your plugin receives the **verified badge** in the Brika store
+A maintainer will review your submission. Once merged, your plugin receives the **verified badge** in the Brika store.
 
 ### YAML Fields
 

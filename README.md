@@ -33,6 +33,19 @@ When a PR is merged:
 
 ## Submit Your Plugin
 
+### Using the CLI (recommended)
+
+```bash
+git clone https://github.com/brikalabs/registry.git
+cd registry
+bun install
+bun run submit @scope/my-plugin
+```
+
+The CLI will fetch your package from npm, generate the YAML, and open a PR automatically.
+
+### Manually
+
 1. Fork this repo
 2. Add `plugins/<scope>/<name>.yaml` for your plugin
 3. Open a PR
@@ -51,6 +64,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 plugins/          # One YAML file per verified plugin
 schema/           # Zod validation schema
 scripts/
+  submit.ts       # CLI to submit a plugin for verification
   validate.ts     # PR validation (schema + npm existence check)
   build.ts        # Compiles YAML -> verified-plugins.json
   sign.ts         # Ed25519 signing
